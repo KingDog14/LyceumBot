@@ -1,3 +1,6 @@
+﻿# Copyright (c) 2026 Король Дмитрий. All rights reserved.
+# Проект «Лицей GPT». Автор — Король Дмитрий.
+
 import re
 from fastapi import APIRouter, HTTPException, Response, Depends
 from pydantic import BaseModel, Field
@@ -50,14 +53,13 @@ def me(user=Depends(get_current_user)):
 
 @router.post("/onboard")
 def onboard(data: OnboardIn, resp: Response, user=Depends(get_optional_user)):
-    """Первый заход: создаёт аккаунт с уникальным кодом."""
     if user:
         return _public(user)
 
     if data.role not in ("student", "teacher", "parent"):
         raise HTTPException(400, "Invalid role")
 
-    reserved = settings.ADMIN_CODES  # уже нормализованы в config
+    reserved = settings.ADMIN_CODES
     code = db.generate_unique_code(reserved)
     uid = db.create_user(code, data.name.strip(), data.role)
     _set_cookie(resp, create_token(uid, data.role))
@@ -66,7 +68,6 @@ def onboard(data: OnboardIn, resp: Response, user=Depends(get_optional_user)):
 
 @router.post("/login-code")
 def login_code(data: CodeIn, resp: Response):
-    """Вход по коду. Админский код → роль admin."""
     code = _normalize_code(data.code)
     if len(code) < 4:
         raise HTTPException(400, "Неверный код")

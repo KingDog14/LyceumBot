@@ -1,19 +1,14 @@
-"""
-Модуль уведомлений (заготовка).
-Подключается к VAPID-ключу и базе подписок.
-Сейчас просто логирует подписку, чтобы фронт мог работать.
-"""
+﻿# Copyright (c) 2026 Король Дмитрий. All rights reserved.
+# Проект «Лицей GPT». Автор — Король Дмитрий.
 
 import logging
 from fastapi import APIRouter, Depends, Request
 from ..auth import get_current_user
 
 logger = logging.getLogger("push")
-
 router = APIRouter()
 
-# здесь будет in-memory / SQLite хранилище подписок
-_subscriptions: list[dict] = []
+_subscriptions: list = []
 
 
 @router.post("/subscribe")
@@ -24,10 +19,11 @@ async def subscribe(req: Request, user=Depends(get_current_user)):
         "endpoint": data.get("endpoint"),
         "keys": data.get("keys"),
     }
-    # TODO: сохранить в БД; отфильтровать дубликаты по endpoint
     _subscriptions.append(entry)
-    logger.info("[push] subscribe user=%s endpoint=%s...",
-                user["id"], (entry["endpoint"] or "")[:60])
+    logger.info(
+        "[push] subscribe user=%s endpoint=%s...",
+        user["id"], (entry["endpoint"] or "")[:60],
+    )
     return {"ok": True}
 
 

@@ -1,7 +1,5 @@
-﻿/* =====================================================
-   Лицей GPT — Service Worker
-   App shell + offline API cache + push module
-===================================================== */
+﻿// Copyright (c) 2026 Король Дмитрий. All rights reserved.
+// Проект «Лицей GPT». Автор — Король Дмитрий.
 
 const VERSION = "v3";
 const APP_CACHE = `licey-app-${VERSION}`;
@@ -17,7 +15,6 @@ const APP_SHELL = [
   "/static/icons/512.png",
 ];
 
-/* ---------- install ---------- */
 self.addEventListener("install", (e) => {
   e.waitUntil(
     caches.open(APP_CACHE).then((c) =>
@@ -27,7 +24,6 @@ self.addEventListener("install", (e) => {
   self.skipWaiting();
 });
 
-/* ---------- activate ---------- */
 self.addEventListener("activate", (e) => {
   e.waitUntil(
     caches.keys().then((keys) =>
@@ -41,7 +37,6 @@ self.addEventListener("activate", (e) => {
   self.clients.claim();
 });
 
-/* ---------- helpers ---------- */
 function isApiGet(url) {
   return url.pathname.startsWith("/api/")
       && !url.pathname.startsWith("/api/auth/")
@@ -67,15 +62,12 @@ async function networkFirstCache(request, cacheName) {
   }
 }
 
-/* ---------- fetch ---------- */
 self.addEventListener("fetch", (event) => {
   const req = event.request;
   const url = new URL(req.url);
 
-  // внешние — не трогаем
   if (url.origin !== location.origin) return;
 
-  // 1) навигация — SPA shell с оффлайн-fallback
   if (req.mode === "navigate") {
     event.respondWith(
       fetch(req)
@@ -89,16 +81,13 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // 2) API GET, кроме auth/stream/admin — кэшируем
   if (isApiGet(url)) {
     event.respondWith(networkFirstCache(req, API_CACHE));
     return;
   }
 
-  // 3) остальные API (POST/DELETE/stream) — напрямую
   if (url.pathname.startsWith("/api/")) return;
 
-  // 4) статика — cache-first + фоновое обновление
   if (url.pathname.startsWith("/static/") || url.pathname === "/manifest.json") {
     event.respondWith(
       caches.match(req).then((cached) => {
@@ -118,11 +107,6 @@ self.addEventListener("fetch", (event) => {
   }
 });
 
-/* =====================================================
-   PUSH MODULE (для будущего расширения)
-   Бэкенд потом отправит:
-   fetch(sub.endpoint, { ... }) с VAPID-подписью
-===================================================== */
 self.addEventListener("push", (event) => {
   let data = {};
   try { data = event.data ? event.data.json() : {}; }
@@ -156,7 +140,6 @@ self.addEventListener("notificationclick", (event) => {
   );
 });
 
-/* ---------- сообщения из фронта ---------- */
 self.addEventListener("message", (event) => {
   const msg = event.data || {};
   if (msg.type === "CLEAR_API_CACHE") {
@@ -167,9 +150,7 @@ self.addEventListener("message", (event) => {
   }
 });
 
-/* ---------- background sync (заготовка) ---------- */
 self.addEventListener("sync", (event) => {
   if (event.tag === "licey-pending") {
-    // будущая логика: отправить накопленные сообщения
   }
 });

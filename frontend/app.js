@@ -1,3 +1,6 @@
+﻿// Copyright (c) 2026 Король Дмитрий. All rights reserved.
+// Проект «Лицей GPT». Автор — Король Дмитрий.
+
 const app = document.getElementById("app");
 const drawer = document.getElementById("drawer");
 const backdrop = document.getElementById("backdrop");
@@ -5,9 +8,6 @@ const userBadge = document.getElementById("user-badge");
 
 let CURRENT_USER = null;
 
-/* =====================================================
-   VIEWPORT — фикс для мобильной клавиатуры
-===================================================== */
 function syncViewportHeight() {
   const vv = window.visualViewport;
   const h = vv ? vv.height : window.innerHeight;
@@ -31,9 +31,6 @@ window.visualViewport?.addEventListener("resize", () => {
   });
 });
 
-/* =====================================================
-   PWA MODULE
-===================================================== */
 let deferredInstallPrompt = null;
 
 function isStandalone() {
@@ -43,7 +40,6 @@ function isStandalone() {
 function isIOS() {
   return /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
 }
-
 function canInstall() {
   return !isStandalone();
 }
@@ -55,7 +51,6 @@ function updateInstallUI() {
     sideBtn.hidden = !show;
     sideBtn.style.display = show ? "" : "none";
   }
-  // баннер показываем только если браузер реально дал промпт
   const banner = document.getElementById("install-banner");
   if (banner) {
     if (show && deferredInstallPrompt && !sessionStorage.getItem("ib-hide")) {
@@ -99,7 +94,6 @@ window.addEventListener("appinstalled", () => {
   toast("Лицей GPT установлен как приложение", "success", 4000);
 });
 
-/* ---------- Notifications module (for future push) ---------- */
 const Notifications = {
   get supported() {
     return "Notification" in window && "serviceWorker" in navigator;
@@ -136,7 +130,6 @@ const Notifications = {
   },
 };
 
-/* ---------- Offline indicator ---------- */
 function updateOnlineStatus() {
   document.body.classList.toggle("offline", !navigator.onLine);
 }
@@ -144,9 +137,6 @@ window.addEventListener("online", updateOnlineStatus);
 window.addEventListener("offline", updateOnlineStatus);
 updateOnlineStatus();
 
-/* =====================================================
-   UTILS
-===================================================== */
 const el = (html) => {
   const t = document.createElement("template");
   t.innerHTML = html.trim();
@@ -158,9 +148,6 @@ function escapeHtml(s) {
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
 
-/* =====================================================
-   TOAST
-===================================================== */
 function toast(message, type = "info", duration = 3000) {
   let host = document.getElementById("toast-host");
   if (!host) {
@@ -182,13 +169,10 @@ function toast(message, type = "info", duration = 3000) {
   }, duration);
 }
 
-/* =====================================================
-   DROPZONE
-===================================================== */
 function mountDropzone(container, {
   onFile, onBatchDone,
-  formats = [".txt"],
-  title = "Перетащите .txt сюда",
+  formats = [".txt", ".pdf", ".docx", ".xlsx", ".csv", ".md"],
+  title = "Перетащите документ сюда",
   multiple = true,
 } = {}) {
   container.innerHTML = `
@@ -332,9 +316,6 @@ function mountDropzone(container, {
   window.addEventListener("drop", stopOnWindow);
 }
 
-/* =====================================================
-   MARKDOWN
-===================================================== */
 const CODE_OPEN = "\uE000";
 const CODE_CLOSE = "\uE001";
 
@@ -377,9 +358,6 @@ const ROLE_LABELS = {
   admin: "🛠 Админ",
 };
 
-/* =====================================================
-   CONFIRM
-===================================================== */
 function confirmDialog(title, message, {
   confirmText = "OK", cancelText = "Отмена", danger = false,
 } = {}) {
@@ -418,9 +396,6 @@ function confirmDialog(title, message, {
   });
 }
 
-/* =====================================================
-   THEME
-===================================================== */
 function applyTheme() {
   const saved = localStorage.getItem("theme");
   const dark = saved === "dark" || (!saved && matchMedia("(prefers-color-scheme: dark)").matches);
@@ -434,9 +409,6 @@ document.getElementById("theme-toggle").onclick = () => {
   applyTheme();
 };
 
-/* =====================================================
-   DRAWER
-===================================================== */
 document.getElementById("menu-btn").onclick = () => {
   drawer.classList.toggle("open");
   backdrop.classList.toggle("show");
@@ -447,21 +419,17 @@ function closeDrawer() {
   backdrop.classList.remove("show");
 }
 
-/* =====================================================
-   INSTALL BANNER
-===================================================== */
-document.getElementById("install-yes").onclick = installApp;
-document.getElementById("install-no").onclick = () => {
+document.getElementById("install-yes")?.addEventListener("click", installApp);
+document.getElementById("install-no")?.addEventListener("click", () => {
   sessionStorage.setItem("ib-hide", "1");
   const b = document.getElementById("install-banner");
-  b.classList.remove("show");
-  setTimeout(() => { b.hidden = true; }, 260);
-};
-document.getElementById("install-btn-sidebar").onclick = installApp;
+  if (b) {
+    b.classList.remove("show");
+    setTimeout(() => { b.hidden = true; }, 260);
+  }
+});
+document.getElementById("install-btn-sidebar")?.addEventListener("click", installApp);
 
-/* =====================================================
-   AUTH / USER
-===================================================== */
 async function loadUser() {
   try { CURRENT_USER = await API.get("/auth/me"); }
   catch { CURRENT_USER = null; }
@@ -481,9 +449,6 @@ function updateChrome() {
   });
 }
 
-/* =====================================================
-   ONBOARDING
-===================================================== */
 function renderOnboard() {
   document.body.classList.add("onboarding");
   app.innerHTML = `
@@ -555,9 +520,6 @@ function renderOnboardLogin() {
   document.getElementById("to-onboard").onclick = (e) => { e.preventDefault(); renderOnboard(); };
 }
 
-/* =====================================================
-   ROUTER
-===================================================== */
 const routes = {
   "/chat": renderChat,
   "/docs": renderDocs,
@@ -583,9 +545,6 @@ async function router() {
 }
 window.addEventListener("hashchange", router);
 
-/* =====================================================
-   CHAT
-===================================================== */
 async function renderChat() {
   app.innerHTML = `
     <section class="chat">
@@ -602,11 +561,11 @@ async function renderChat() {
         </div>
         <form class="composer" id="chat-form">
           <div class="wrap">
-            <button type="button" id="attach-btn" title="Прикрепить .txt" aria-label="Прикрепить">📎</button>
+            <button type="button" id="attach-btn" title="Прикрепить файл" aria-label="Прикрепить">📎</button>
             <textarea name="text" placeholder="Спросите что-нибудь…" rows="1"></textarea>
             <button type="submit" aria-label="Отправить">➤</button>
           </div>
-          <input type="file" id="attach-input" accept=".txt" hidden>
+          <input type="file" id="attach-input" accept=".txt,.pdf,.docx,.xlsx,.csv,.md" hidden>
         </form>
       </div>
       <aside class="chat-toc">
@@ -639,7 +598,7 @@ async function renderChat() {
     const history = await API.get("/chat/history");
     if (!history.length) {
       messages.appendChild(el(
-        `<div class="empty-hint">👋 Привет, ${escapeHtml(CURRENT_USER.name)}! Задай вопрос или прикрепи .txt кнопкой 📎.</div>`
+        `<div class="empty-hint">👋 Привет, ${escapeHtml(CURRENT_USER.name)}! Задай вопрос или прикрепи файл кнопкой 📎.</div>`
       ));
     } else {
       history.forEach((m) => addMessage(m.role, m.content, m.role === "assistant"));
@@ -820,9 +779,6 @@ function flashCopied(wrap, btn) {
   }, 1500);
 }
 
-/* =====================================================
-   DOCS
-===================================================== */
 async function renderDocs() {
   const isAdmin = CURRENT_USER.role === "admin";
   let allDocs = [];
@@ -831,8 +787,8 @@ async function renderDocs() {
     <section class="page">
       <h1>${isAdmin ? "📚 Все документы" : "📚 Мои документы"}</h1>
       <p class="muted">${isAdmin
-        ? "Публичные доступны всем. Личные — только владельцу и вам."
-        : "Здесь только ваши документы. Их видите только вы и админ."}</p>
+        ? "Публичные доступны всем. Личные — только владельцу и вам. Форматы: PDF, DOCX, XLSX, CSV, TXT, MD."
+        : "Здесь только ваши документы. Форматы: PDF, DOCX, XLSX, CSV, TXT, MD."}</p>
 
       <div id="dropzone-host" style="margin:1rem 0"></div>
 
@@ -893,8 +849,8 @@ async function renderDocs() {
   }
 
   mountDropzone(document.getElementById("dropzone-host"), {
-    formats: [".txt"],
-    title: "Перетащите .txt или выберите файлы",
+    formats: [".txt", ".pdf", ".docx", ".xlsx", ".csv", ".md"],
+    title: "Перетащите документ или выберите файлы",
     onFile: (file) => API.upload("/docs/upload", file),
     onBatchDone: async () => { await refreshDocs(); },
   });
@@ -950,7 +906,7 @@ async function renderDocs() {
     const list = document.getElementById("docs-list");
     const docs = applyFilters(allDocs);
     if (!allDocs.length) {
-      list.innerHTML = `<p class="empty-hint">Пока пусто. Загрузите .txt — я буду опираться на него в ответах.</p>`;
+      list.innerHTML = `<p class="empty-hint">Пока пусто. Загрузите документ — я буду опираться на него в ответах.</p>`;
       return;
     }
     if (!docs.length) {
@@ -1069,9 +1025,6 @@ async function openDoc(id) {
   }
 }
 
-/* =====================================================
-   ADMIN
-===================================================== */
 async function renderAdmin() {
   if (CURRENT_USER?.role !== "admin") { location.hash = "/chat"; return; }
 
@@ -1084,7 +1037,7 @@ async function renderAdmin() {
         <div class="skeleton" style="width:120px; height:1.2rem"></div>
       </div>
 
-      <h2>Загрузить .txt как публичный</h2>
+      <h2>Загрузить документ как публичный</h2>
       <p class="muted">Файл будет виден всем пользователям и попадёт в общую базу знаний.</p>
       <div id="admin-dropzone"></div>
 
@@ -1205,16 +1158,13 @@ async function renderAdmin() {
   await Promise.all([refreshStats(), loadUsers()]);
 
   mountDropzone(document.getElementById("admin-dropzone"), {
-    formats: [".txt"],
-    title: "Перетащите .txt для публичной базы",
+    formats: [".txt", ".pdf", ".docx", ".xlsx", ".csv", ".md"],
+    title: "Перетащите документ для публичной базы",
     onFile: (file) => API.upload("/docs/upload", file, { public: true }),
     onBatchDone: refreshStats,
   });
 }
 
-/* =====================================================
-   PROFILE
-===================================================== */
 async function renderProfile() {
   if (!CURRENT_USER) { location.hash = "/chat"; return; }
   const isAdmin = CURRENT_USER.role === "admin";
@@ -1275,11 +1225,9 @@ async function renderProfile() {
     });
   };
 
-  /* install section */
   updateInstallUI();
   document.getElementById("install-btn").onclick = installApp;
 
-  /* notifications section */
   const nbtn = document.getElementById("notif-enable");
   const nstat = document.getElementById("notif-status");
   const permLabels = {
@@ -1290,10 +1238,7 @@ async function renderProfile() {
     nstat.textContent = "Статус: " + (permLabels[Notifications.permission] || "—");
   };
   refreshNotifStatus();
-  nbtn.onclick = async () => {
-    await Notifications.test();
-    refreshNotifStatus();
-  };
+  nbtn.onclick = async () => { await Notifications.test(); refreshNotifStatus(); };
 
   document.getElementById("logout-btn").onclick = async () => {
     const ok = await confirmDialog(
@@ -1303,7 +1248,6 @@ async function renderProfile() {
     );
     if (!ok) return;
     await API.post("/auth/logout");
-    // чистим кэш API в SW, чтобы следующий юзер не видел чужие данные оффлайн
     navigator.serviceWorker?.controller?.postMessage({ type: "CLEAR_API_CACHE" });
     CURRENT_USER = null;
     updateChrome();
@@ -1326,14 +1270,10 @@ async function renderProfile() {
   };
 }
 
-/* =====================================================
-   SERVICE WORKER REGISTRATION
-===================================================== */
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", async () => {
     try {
       const reg = await navigator.serviceWorker.register("/sw.js");
-      // если прилетело обновление — активируем сразу
       reg.addEventListener("updatefound", () => {
         const sw = reg.installing;
         sw?.addEventListener("statechange", () => {
@@ -1347,9 +1287,6 @@ if ("serviceWorker" in navigator) {
   });
 }
 
-/* =====================================================
-   BOOT
-===================================================== */
 (async () => {
   applyTheme();
   syncViewportHeight();

@@ -1,4 +1,7 @@
-﻿import logging
+﻿# Copyright (c) 2026 Король Дмитрий. All rights reserved.
+# Проект «Лицей GPT». Автор — Король Дмитрий.
+
+import logging
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -16,14 +19,12 @@ FRONTEND = Path(__file__).resolve().parents[2] / "frontend"
 
 app = FastAPI(title="Лицей GPT", version="1.0")
 
-# ---------- API ----------
 app.include_router(auth.router,  prefix="/api/auth",  tags=["auth"])
 app.include_router(chat.router,  prefix="/api/chat",  tags=["chat"])
 app.include_router(docs.router,  prefix="/api/docs",  tags=["docs"])
 app.include_router(admin.router, prefix="/api/admin", tags=["admin"])
 app.include_router(push.router,  prefix="/api/push",  tags=["push"])
 
-# ---------- статика ----------
 app.mount("/static", StaticFiles(directory=FRONTEND), name="static")
 
 
@@ -37,7 +38,6 @@ async def manifest():
 
 @app.get("/sw.js")
 async def service_worker():
-    # Service Worker должен отдаваться с корня, чтобы scope = /
     return FileResponse(
         FRONTEND / "sw.js",
         media_type="application/javascript",
@@ -53,10 +53,8 @@ async def favicon():
     return FileResponse(FRONTEND / "icons" / "192.png", media_type="image/png")
 
 
-# ---------- SPA fallback ----------
 @app.get("/{full_path:path}")
 async def spa(full_path: str):
-    # всё, что не /api и не /static, отдаём index.html
     if full_path.startswith("api/"):
         return JSONResponse({"detail": "Not found"}, status_code=404)
     return FileResponse(FRONTEND / "index.html")

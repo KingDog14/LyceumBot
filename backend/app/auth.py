@@ -1,3 +1,6 @@
+﻿# Copyright (c) 2026 Король Дмитрий. All rights reserved.
+# Проект «Лицей GPT». Автор — Король Дмитрий.
+
 from datetime import datetime, timedelta
 from typing import Optional
 from jose import jwt, JWTError

@@ -1,3 +1,6 @@
+﻿# Copyright (c) 2026 Король Дмитрий. All rights reserved.
+# Проект «Лицей GPT». Автор — Король Дмитрий.
+
 import logging
 from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
@@ -21,17 +24,11 @@ class ChatIn(BaseModel):
 
 @router.post("/stream")
 async def stream(payload: ChatIn, user=Depends(get_current_user)):
-    # RAG-контекст = свои + публичные (owner_id=None)
     docs = db.list_docs_for_rag(user)
     logger.info(
         "[chat] user=%s role=%s docs_in_rag=%d",
         user["id"], user["role"], len(docs),
     )
-    for d in docs:
-        logger.debug(
-            "   doc#%s owner=%s title=%r",
-            d["id"], d.get("owner_id"), d.get("title"),
-        )
 
     async def gen():
         async for chunk in assistant.ask_stream(

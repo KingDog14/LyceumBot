@@ -1,3 +1,6 @@
+﻿// Copyright (c) 2026 Король Дмитрий. All rights reserved.
+// Проект «Лицей GPT». Автор — Король Дмитрий.
+
 const API = {
   async request(path, opts = {}) {
     const res = await fetch(`/api${path}`, {
@@ -22,11 +25,15 @@ const API = {
   post: (p, body) => API.request(p, { method: "POST", body }),
   del: (p) => API.request(p, { method: "DELETE" }),
 
-  async upload(path, file) {
+  async upload(path, file, { public: asPublic = false } = {}) {
+    const sep = path.includes("?") ? "&" : "?";
+    const url = `/api${path}${asPublic ? sep + "public=true" : ""}`;
     const fd = new FormData();
     fd.append("file", file);
-    const res = await fetch(`/api${path}`, {
-      method: "POST", body: fd, credentials: "include",
+    const res = await fetch(url, {
+      method: "POST",
+      body: fd,
+      credentials: "include",
     });
     if (!res.ok) {
       let msg = "Upload failed";
@@ -36,7 +43,6 @@ const API = {
     return res.json();
   },
 
-  /** SSE через fetch + ReadableStream */
   async *streamChat(message) {
     const res = await fetch("/api/chat/stream", {
       method: "POST",

@@ -1,3 +1,6 @@
+﻿# Copyright (c) 2026 Король Дмитрий. All rights reserved.
+# Проект «Лицей GPT». Автор — Король Дмитрий.
+
 import os
 import re
 import json
@@ -5,7 +8,7 @@ import asyncio
 import logging
 import threading
 from datetime import datetime
-from typing import AsyncIterator, List, Dict, Optional
+from typing import AsyncIterator, List, Dict
 
 from gigachat import GigaChat
 from gigachat.exceptions import GigaChatException
@@ -23,13 +26,13 @@ ROLE_MAP = {
 }
 
 
-class RAGAssistant:
-    """Ассистент поверх GigaChat с RAG-контекстом и историей пользователя."""
+MAX_CONTEXT_CHARS = 40000
 
+
+class RAGAssistant:
     def __init__(self, db):
         self.db = db
 
-    # ---------- client ----------
     def _build_client(self) -> GigaChat:
         return GigaChat(
             base_url=settings.GIGACHAT_BASE_URL,
@@ -43,31 +46,35 @@ class RAGAssistant:
     def has_credentials(self) -> bool:
         return bool(settings.GIGACHAT_CREDENTIALS)
 
-    # ---------- retrieval ----------
-    def retrieve_context(self, question: str, docs: List[Dict] = None, top_k: int = 5) -> str:
+    def retrieve_context(self, question: str = "", docs: List[Dict] = None) -> str:
         if docs is None:
             docs = self.db.list_docs()
         if not docs:
             return ""
 
-        q_words = {w.lower() for w in re.findall(r"\w+", question) if len(w) > 2}
+        sorted_docs = sorted(
+            docs,
+            key=lambda d: (-(len(d.get("content") or "")), d.get("id", 0)),
+        )
 
-        scored = []
-        for d in docs:
-            text = f"{d.get('title', '')} {d.get('content', '')}".lower()
-            score = sum(1 for w in q_words if w in text)
-            scored.append((score, d))
+        parts: List[str] = []
+        total = 0
+        for d in sorted_docs:
+            title = (d.get("title") or "Документ").strip()
+            body = (d.get("content") or "").strip()
+            if not body:
+                continue
+            block = f"### {title}\n{body}"
+            if total + len(block) > MAX_CONTEXT_CHARS:
+                remaining = MAX_CONTEXT_CHARS - total
+                if remaining > 500:
+                    parts.append(block[:remaining] + "\n…[обрезано]")
+                break
+            parts.append(block)
+            total += len(block)
 
-        scored.sort(key=lambda x: x[0], reverse=True)
-        matched = [d for s, d in scored if s > 0][:top_k]
+        return "\n\n---\n\n".join(parts)
 
-        # Если слов не совпало, но документы у юзера есть — берём первые.
-        if not matched:
-            matched = [d for _, d in scored[:top_k]]
-
-        return "\n\n---\n\n".join(d.get("content", "") for d in matched)
-
-    # ---------- prompt ----------
     def _build_messages(self, question: str, user_id: int, role: str, context: str):
         history = (self.db.get_user_history(user_id) or [])[-10:]
         now = datetime.now().strftime("%d.%m.%Y %H:%M")
@@ -75,19 +82,21 @@ class RAGAssistant:
 
         if has_ctx:
             system = f"""Ты — ассистент Лицея GPT. Дружелюбный, живой, отвечаешь по-человечески.
+Разработчик этого приложения — Король Дмитрий. Оно работает на базе технологий искусственного интеллекта. Если спросят «кто тебя создал», отвечай: «Я — ИИ-ассистент, приложение разработал Король Дмитрий, а моя основа — это технологии GigaChat от Сбера».
 Роль пользователя: {role}. Сейчас: {now}.
 
-У тебя есть фрагменты базы знаний пользователя (ниже, в блоке КОНТЕКСТ).
+Ниже — ВСЕ документы пользователя из его базы знаний. Каждый блок начинается с "### Название".
 ПРАВИЛА:
-1. Если вопрос КАСАЕТСЯ содержимого контекста — опирайся ТОЛЬКО на него, не выдумывай факты.
-2. Если вопрос общий (приветствие, кто ты, что умеешь, объяснение, шутка, код и т.п.) — отвечай своими знаниями, контекст не нужен.
+1. Если вопрос пользователя можно связать с содержимым любого блока — опирайся ТОЛЬКО на него, не выдумывай факты. Обязательно используй имя документа, к которому обращаешься.
+2. Если вопрос общий (приветствие, кто ты, что умеешь, объяснение, шутка, код и т.п.) — отвечай своими знаниями, документы не нужны.
 3. Никогда не упоминай слова «контекст», «база знаний», «промпт». Пользователь видит только ответ.
-4. Кратко, по делу, без канцелярита. Разрешён Markdown.
+4. Кратко, по делу. Разрешён Markdown.
 
-КОНТЕКСТ:
+ДОКУМЕНТЫ:
 {context}"""
         else:
             system = f"""Ты — ассистент Лицея GPT. Дружелюбный, живой.
+Разработчик этого приложения — Король Дмитрий. Оно работает на базе технологий искусственного интеллекта. Если спросят «кто тебя создал», отвечай: «Я — ИИ-ассистент, приложение разработал Король Дмитрий, а моя основа — это технологии GigaChat от Сбера».
 Роль пользователя: {role}. Сейчас: {now}.
 
 У пользователя пока нет личных документов в базе — отвечай своими знаниями.
@@ -99,9 +108,7 @@ class RAGAssistant:
         msgs.append({"role": "user", "content": question})
         return msgs, history
 
-    # ---------- non-stream (на случай, если понадобится) ----------
-    def ask_sync(self, question: str, user_id: int, role: str,
-                 docs: List[Dict] = None) -> str:
+    def ask_sync(self, question: str, user_id: int, role: str, docs: List[Dict] = None) -> str:
         context = self.retrieve_context(question, docs)
         msg_dicts, history = self._build_messages(question, user_id, role, context)
 
@@ -127,13 +134,11 @@ class RAGAssistant:
         self.db.set_user_history(user_id, history)
         return answer
 
-    # ---------- stream ----------
-    async def ask_stream(self, question: str, user_id: int, role: str,
-                         docs: List[Dict] = None) -> AsyncIterator[str]:
+    async def ask_stream(self, question: str, user_id: int, role: str, docs: List[Dict] = None) -> AsyncIterator[str]:
         context = self.retrieve_context(question, docs)
+        logger.info("RAG: docs=%d context_chars=%d", len(docs or []), len(context))
         msg_dicts, history = self._build_messages(question, user_id, role, context)
 
-        # --- Fallback: нет ключа GigaChat ---
         if not self.has_credentials():
             if context:
                 answer = f"ИИ временно недоступен. Вот что нашлось в базе знаний:\n\n{context}"
@@ -145,7 +150,6 @@ class RAGAssistant:
             self.db.set_user_history(user_id, history)
             return
 
-        # --- Собираем payload ---
         try:
             payload = self._make_payload(msg_dicts)
         except Exception as e:
@@ -153,21 +157,16 @@ class RAGAssistant:
             yield f"⚠️ Ошибка подготовки запроса: {e}"
             return
 
-        # --- Стрим через thread + asyncio.Queue ---
-        queue: "asyncio.Queue[tuple]" = asyncio.Queue()
+        queue: "asyncio.Queue" = asyncio.Queue()
         loop = asyncio.get_event_loop()
 
         def worker():
-            """Синхронный SDK в отдельном потоке. Кладёт в очередь:
-                ("chunk", text) | ("error", text) | ("done", None)
-            """
             try:
                 with self._build_client() as client:
                     for chunk in client.stream(payload):
                         if not chunk.choices:
                             continue
                         choice = chunk.choices[0]
-                        # У стриминговых чанков обычно delta.content
                         text = None
                         delta = getattr(choice, "delta", None)
                         if delta is not None:
@@ -180,10 +179,7 @@ class RAGAssistant:
                             loop.call_soon_threadsafe(queue.put_nowait, ("chunk", text))
             except GigaChatException as e:
                 logger.exception("GigaChat stream error")
-                loop.call_soon_threadsafe(
-                    queue.put_nowait,
-                    ("error", f"GigaChat недоступен: {e}"),
-                )
+                loop.call_soon_threadsafe(queue.put_nowait, ("error", f"GigaChat недоступен: {e}"))
             except Exception as e:
                 logger.exception("GigaChat stream unexpected error")
                 loop.call_soon_threadsafe(queue.put_nowait, ("error", str(e)))
@@ -207,22 +203,15 @@ class RAGAssistant:
                 full += item
                 yield item
 
-        # Если совсем ничего не пришло — не сохраняем пустой ответ
         if had_error and not full:
             return
 
         full_clean = self._clean(full)
-        # Если чистили — могли отрезать хвост у уже отданного стрима.
-        # Дописываем разницу, чтобы фронт получил полный текст без рекламы.
-        if full_clean and full_clean != full:
-            # Ничего не доливаем повторно — просто сохраняем в историю
-            pass
 
         history.append({"role": "user", "content": question})
         history.append({"role": "assistant", "content": full_clean or full})
         self.db.set_user_history(user_id, history)
 
-    # ---------- helpers ----------
     @staticmethod
     def _make_payload(msg_dicts: List[Dict]) -> Chat:
         messages = [
@@ -236,7 +225,6 @@ class RAGAssistant:
 
     @staticmethod
     def _clean(text: str) -> str:
-        # убираем рекламные хвосты, если GigaChat их дописывает
         text = re.sub(r"(Powered by|gigachat\.ai|sberbank).*$", "", text,
                       flags=re.IGNORECASE | re.DOTALL)
         return text.strip()

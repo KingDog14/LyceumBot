@@ -1,10 +1,13 @@
+﻿# Copyright (c) 2026 Король Дмитрий. All rights reserved.
+# Проект «Лицей GPT». Автор — Король Дмитрий.
+
 import sqlite3
 import json
 import os
 import secrets
 from typing import Optional, List, Dict
 
-ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"  # без I, L, O, 0, 1 — чтобы не путать
+ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
 
 
 def generate_code() -> str:
@@ -63,7 +66,6 @@ class DB:
 
         self.conn.commit()
 
-    # ---------- users ----------
     def create_user(self, access_code: str, name: str, role: str = "student") -> int:
         c = self.conn.cursor()
         c.execute(
@@ -103,7 +105,6 @@ class DB:
         )
         return [dict(r) for r in cur.fetchall()]
 
-    # ---------- history ----------
     def set_user_history(self, uid: int, history: List[Dict]):
         self.conn.execute(
             "UPDATE users SET history=? WHERE id=?",
@@ -120,7 +121,6 @@ class DB:
         except Exception:
             return []
 
-    # ---------- docs ----------
     def add_doc(self, title, content, embedding=None, meta=None, owner_id=None) -> int:
         c = self.conn.cursor()
         c.execute(
@@ -146,11 +146,7 @@ class DB:
             out.append(d)
         return out
 
-    # ============================================================
-    # ВИДИМОСТЬ
-    # ============================================================
     def list_docs_for(self, user: Dict) -> List[Dict]:
-        """Для UI: обычный юзер видит ТОЛЬКО свои. Админ — все."""
         all_docs = self.list_docs()
         if user["role"] == "admin":
             return all_docs
@@ -158,7 +154,6 @@ class DB:
         return [d for d in all_docs if d.get("owner_id") == uid]
 
     def list_docs_for_rag(self, user: Dict) -> List[Dict]:
-        """Для RAG: свои + публичные (owner_id=None). Админ — все."""
         all_docs = self.list_docs()
         if user["role"] == "admin":
             return all_docs

@@ -6,10 +6,10 @@
   <title>Лицей GPT</title>
 
   <meta name="description" content="Умный ассистент лицея: отвечает по документам, работает оффлайн, ставится как приложение.">
+  <meta name="author" content="Король Дмитрий">
   <meta name="theme-color" media="(prefers-color-scheme: light)" content="#2563eb">
   <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0f0f10">
 
-  <!-- PWA -->
   <link rel="manifest" href="/manifest.json">
   <link rel="icon" href="/static/icons/192.png">
   <link rel="apple-touch-icon" href="/static/icons/192.png">
@@ -38,6 +38,9 @@
     </button>
     <div class="spacer"></div>
     <button id="theme-toggle" type="button">🌙 Тёмная тема</button>
+    <div class="sidebar-footer">
+      © 2026 Король Дмитрий
+    </div>
   </nav>
 
   <div id="backdrop"></div>
@@ -49,6 +52,11 @@
       <span id="user-badge"></span>
     </header>
     <div id="app"></div>
+    <footer class="app-footer">
+      <span class="af-brand">🎓 Лицей GPT</span>
+      <span class="af-sep">•</span>
+      <span class="af-author">© 2026 Король Дмитрий</span>
+    </footer>
   </main>
 
   <div id="install-banner" class="install-banner" hidden>

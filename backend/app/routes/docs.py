@@ -1,11 +1,15 @@
+﻿# Copyright (c) 2026 Король Дмитрий. All rights reserved.
+# Проект «Лицей GPT». Автор — Король Дмитрий.
+
 import os
 import tempfile
+from pathlib import Path
 from fastapi import APIRouter, Depends, UploadFile, File, HTTPException, Query
 
 from ..auth import get_current_user
 from ..db import DB
 from ..assistant import RAGAssistant
-from ..rag import ingest_text
+from ..rag import ingest_text, SUPPORTED_EXTS
 from ..config import settings
 
 router = APIRouter()
@@ -13,10 +17,17 @@ db = DB(settings.DB_PATH)
 assistant = RAGAssistant(db)
 
 
+def _ext_ok(filename: str) -> bool:
+    return Path(filename).suffix.lower() in SUPPORTED_EXTS
+
+
+def _ext_list_human() -> str:
+    return ", ".join(SUPPORTED_EXTS)
+
+
 @router.get("/list")
 def list_docs(user=Depends(get_current_user)):
     docs = db.list_docs_for(user)
-
     users_cache = {}
     if user["role"] == "admin":
         users_cache = {u["id"]: u["name"] for u in db.list_users()}
@@ -49,19 +60,19 @@ def get_doc(doc_id: int, user=Depends(get_current_user)):
 @router.post("/upload")
 async def upload(
     file: UploadFile = File(...),
-    public: bool = Query(False, description="Загрузить как публичный (только для админа)"),
+    public: bool = Query(False),
     user=Depends(get_current_user),
 ):
-    if not file.filename.lower().endswith(".txt"):
-        raise HTTPException(400, "Только .txt")
+    if not file.filename or not _ext_ok(file.filename):
+        raise HTTPException(400, f"Поддерживаются только: {_ext_list_human()}")
 
-    # публичный может загружать ТОЛЬКО админ
     if public and user["role"] != "admin":
         raise HTTPException(403, "Публичные файлы может загружать только администратор")
 
     owner_id = None if public else user["id"]
+    suffix = Path(file.filename).suffix.lower()
 
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".txt") as tmp:
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
         tmp.write(await file.read())
         tmp_path = tmp.name
 
@@ -70,6 +81,8 @@ async def upload(
             db, assistant, file.filename, file_path=tmp_path, owner_id=owner_id
         )
         return {"added": len(ids), "ids": ids, "public": public}
+    except ValueError as e:
+        raise HTTPException(400, str(e))
     finally:
         try:
             os.unlink(tmp_path)

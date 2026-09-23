@@ -1,3 +1,6 @@
+﻿# Copyright (c) 2026 Король Дмитрий. All rights reserved.
+# Проект «Лицей GPT». Автор — Король Дмитрий.
+
 import os
 import re
 from pathlib import Path
@@ -31,7 +34,6 @@ class Settings:
         if _normalize_code(c)
     }
 
-    # ---------- GigaChat ----------
     GIGACHAT_BASE_URL = os.getenv("GIGACHAT_BASE_URL", "https://api.giga.chat/v1")
     GIGACHAT_MODEL = os.getenv("GIGACHAT_MODEL", "GigaChat-2")
     GIGACHAT_CREDENTIALS = os.getenv("GIGACHAT_CREDENTIALS", "")

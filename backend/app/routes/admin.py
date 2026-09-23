@@ -1,3 +1,6 @@
+﻿# Copyright (c) 2026 Король Дмитрий. All rights reserved.
+# Проект «Лицей GPT». Автор — Король Дмитрий.
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
