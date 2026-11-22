@@ -20,7 +20,7 @@
   <meta name="apple-mobile-web-app-title" content="Лицей GPT">
   <meta name="application-name" content="Лицей GPT">
 
-  <link rel="stylesheet" href="/static/styles.css">
+  <link rel="stylesheet" href="/static/styles.css?v=15">
 </head>
 <body>
   <nav id="drawer">
@@ -69,7 +69,14 @@
     <button id="install-no" type="button" class="ib-close" aria-label="Закрыть">✕</button>
   </div>
 
-  <script src="/static/api.js"></script>
-  <script src="/static/app.js"></script>
+  <script>
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.getRegistration().then(function (reg) {
+        if (reg) reg.update();
+      });
+    }
+  </script>
+  <script src="/static/api.js?v=20"></script>
+  <script src="/static/app.js?v=20"></script>
 </body>
 </html>

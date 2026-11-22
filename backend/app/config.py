@@ -14,10 +14,10 @@ def _normalize_code(c: str) -> str:
     return re.sub(r"[^A-Z0-9]", "", (c or "").upper())
 
 
-def _as_bool(v: str, default: bool = False) -> bool:
+def _as_bool(v, default=False):
     if v is None:
         return default
-    return v.strip().lower() in ("1", "true", "yes", "on")
+    return str(v).strip().lower() in ("1", "true", "yes", "on")
 
 
 class Settings:
@@ -26,6 +26,7 @@ class Settings:
     TOKEN_TTL_MIN = 60 * 24 * 365
 
     DB_PATH = os.getenv("DB_PATH", str(ROOT / "backend" / "rag_bot.db"))
+    UPLOADS_DIR = os.getenv("UPLOADS_DIR", str(ROOT / "backend" / "uploads"))
     COOKIE_SECURE = _as_bool(os.getenv("COOKIE_SECURE"), False)
 
     ADMIN_CODES = {

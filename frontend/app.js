@@ -32,16 +32,24 @@ window.visualViewport?.addEventListener("resize", () => {
 });
 
 let deferredInstallPrompt = null;
+let appInstalled = false;
 
 function isStandalone() {
   return window.matchMedia("(display-mode: standalone)").matches
+      || window.matchMedia("(display-mode: fullscreen)").matches
+      || window.matchMedia("(display-mode: minimal-ui)").matches
       || window.navigator.standalone === true;
 }
 function isIOS() {
   return /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
 }
+function isAndroid() {
+  return /Android/i.test(navigator.userAgent);
+}
 function canInstall() {
-  return !isStandalone();
+  if (isStandalone()) return false;
+  if (appInstalled) return false;
+  return true;
 }
 
 function updateInstallUI() {
@@ -53,7 +61,7 @@ function updateInstallUI() {
   }
   const banner = document.getElementById("install-banner");
   if (banner) {
-    if (show && deferredInstallPrompt && !sessionStorage.getItem("ib-hide")) {
+    if (show && !sessionStorage.getItem("ib-hide")) {
       banner.hidden = false;
       requestAnimationFrame(() => banner.classList.add("show"));
     } else {
@@ -65,22 +73,41 @@ function updateInstallUI() {
 
 async function installApp() {
   if (deferredInstallPrompt) {
-    deferredInstallPrompt.prompt();
-    const { outcome } = await deferredInstallPrompt.userChoice;
-    deferredInstallPrompt = null;
-    updateInstallUI();
-    if (outcome === "accepted") toast("Устанавливаю…", "success");
+    try {
+      deferredInstallPrompt.prompt();
+      const choice = await deferredInstallPrompt.userChoice;
+      deferredInstallPrompt = null;
+      updateInstallUI();
+      if (choice && choice.outcome === "accepted") {
+        toast("Устанавливаю…", "success");
+      }
+    } catch {}
     return;
   }
+
   if (isIOS()) {
     await confirmDialog(
       "Установка на iPhone / iPad",
-      "Нажми «Поделиться» в Safari, выбери «На экран Домой» — приложение появится как иконка.",
+      "1. Нажми «Поделиться» внизу (квадрат со стрелкой вверх).\n2. Выбери «На экран Домой».\n3. Нажми «Добавить».",
       { confirmText: "Понятно", cancelText: "Отмена" }
     );
-  } else {
-    toast("Меню браузера → «Установить приложение»", "info", 5000);
+    return;
   }
+
+  if (isAndroid()) {
+    await confirmDialog(
+      "Установка приложения",
+      "1. Открой меню браузера (⋮ справа сверху).\n2. Выбери «Установить приложение» или «Добавить на главный экран».\n3. Подтверди установку.",
+      { confirmText: "Понятно", cancelText: "Отмена" }
+    );
+    return;
+  }
+
+  await confirmDialog(
+    "Установка приложения",
+    "В Chrome или Edge нажми иконку установки (⊕) в адресной строке справа. В других браузерах — через меню «Установить приложение».",
+    { confirmText: "Понятно", cancelText: "Отмена" }
+  );
 }
 
 window.addEventListener("beforeinstallprompt", (e) => {
@@ -88,8 +115,10 @@ window.addEventListener("beforeinstallprompt", (e) => {
   deferredInstallPrompt = e;
   updateInstallUI();
 });
+
 window.addEventListener("appinstalled", () => {
   deferredInstallPrompt = null;
+  appInstalled = true;
   updateInstallUI();
   toast("Лицей GPT установлен как приложение", "success", 4000);
 });
@@ -364,11 +393,14 @@ function confirmDialog(title, message, {
   return new Promise((resolve) => {
     const overlay = document.createElement("div");
     overlay.className = "modal-overlay";
+    const lines = String(message).split("\n")
+      .map((l) => escapeHtml(l))
+      .join("<br>");
     overlay.innerHTML = `
       <div class="modal" role="dialog" aria-modal="true">
         <div class="modal-icon ${danger ? "danger" : ""}">${danger ? "🗑" : "❔"}</div>
         <h3 class="modal-title">${escapeHtml(title)}</h3>
-        <p class="modal-text">${escapeHtml(message)}</p>
+        <p class="modal-text">${lines}</p>
         <div class="modal-actions">
           <button class="modal-btn cancel" type="button">${escapeHtml(cancelText)}</button>
           <button class="modal-btn ${danger ? "danger" : "primary"}" type="button">${escapeHtml(confirmText)}</button>
@@ -601,7 +633,12 @@ async function renderChat() {
         `<div class="empty-hint">👋 Привет, ${escapeHtml(CURRENT_USER.name)}! Задай вопрос или прикрепи файл кнопкой 📎.</div>`
       ));
     } else {
-      history.forEach((m) => addMessage(m.role, m.content, m.role === "assistant"));
+      history.forEach((m) => {
+        const content = addMessage(m.role, m.content, m.role === "assistant");
+        if (m.role === "assistant" && Array.isArray(m.sources) && m.sources.length) {
+          renderSources(content, m.sources);
+        }
+      });
     }
   } catch {
     messages.appendChild(el(`<div class="empty-hint">Не удалось загрузить историю.</div>`));
@@ -665,27 +702,80 @@ async function renderChat() {
     messages.scrollTop = messages.scrollHeight;
 
     const bot = addMessage("assistant", "", true);
-    bot.innerHTML = `<div class="typing"><span></span><span></span><span></span></div>`;
+    
+    bot.innerHTML = `
+      <div class="typing-status">
+        <div class="ts-dots"><span></span><span></span><span></span></div>
+        <span class="ts-text">Анализирую базу знаний...</span>
+      </div>
+    `;
 
     let acc = "";
     let first = true;
+    let botSources = [];
+
+    const shouldAutoScroll = () => {
+      return messages.scrollHeight - messages.scrollTop - messages.clientHeight < 100;
+    };
+
     try {
-      for await (const chunk of API.streamChat(text)) {
+      for await (const chunk of API.streamChat(text, {
+        onSources: (docs) => { botSources = docs; },
+        onStatus: (statusText) => {
+          if (first) {
+            const tsText = bot.querySelector(".ts-text");
+            if (tsText) tsText.textContent = statusText;
+          }
+        }
+      })) {
         if (first) { bot.innerHTML = ""; first = false; }
         acc += chunk;
         bot.innerHTML = renderMarkdown(acc);
-        messages.scrollTop = messages.scrollHeight;
+        
+        if (shouldAutoScroll()) {
+          messages.scrollTop = messages.scrollHeight;
+        }
       }
       if (first) bot.innerHTML = renderMarkdown("…");
     } catch (err) {
       bot.innerHTML = renderMarkdown("⚠️ " + (err.message || "Ошибка"));
     } finally {
+      if (botSources.length) renderSources(bot, botSources);
       sendBtn.disabled = false;
       ta.focus();
     }
   };
 
   ta.focus();
+}
+
+function renderSources(contentEl, sources) {
+  if (!sources || !sources.length) return;
+  const bubble = contentEl.closest(".bubble");
+  if (!bubble) return;
+
+  bubble.querySelector(".sources-accordion")?.remove();
+
+  const count = sources.length;
+  
+  const block = document.createElement("details");
+  block.className = "sources-accordion";
+  block.innerHTML = `
+    <summary>📎 Источники (${count})</summary>
+    <div class="sources-list">
+      ${sources.map((s) =>
+        `<button type="button" class="source-chip" data-id="${s.id}">${escapeHtml(s.title)}</button>`
+      ).join("")}
+    </div>
+  `;
+  block.querySelectorAll(".source-chip").forEach((btn) => {
+    btn.onclick = (e) => {
+      e.stopPropagation();
+      const id = parseInt(btn.dataset.id, 10);
+      if (!isNaN(id)) openDoc(id, false);
+    };
+  });
+  bubble.appendChild(block);
 }
 
 function buildToc() {
@@ -779,24 +869,66 @@ function flashCopied(wrap, btn) {
   }, 1500);
 }
 
+async function downloadDoc(docId, title) {
+  try {
+    const res = await fetch(`/api/docs/${docId}/download`, {
+      credentials: "include",
+    });
+    if (!res.ok) {
+      let msg = "Не удалось скачать";
+      try { msg = (await res.json()).detail || msg; } catch {}
+      throw new Error(msg);
+    }
+
+    let filename = (title || `document_${docId}`).trim();
+    const cd = res.headers.get("content-disposition") || "";
+    const mStar = cd.match(/filename\*=UTF-8''([^;]+)/i);
+    const mPlain = cd.match(/filename="([^"]+)"/i) || cd.match(/filename=([^;]+)/i);
+    if (mStar) {
+      try { filename = decodeURIComponent(mStar[1]); } catch {}
+    } else if (mPlain) {
+      filename = mPlain[1].trim();
+    }
+
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1500);
+    toast("Скачивание началось", "success", 1800);
+  } catch (e) {
+    toast("Ошибка: " + e.message, "error");
+  }
+}
+
+// =====================================================
+// DOCS PAGE (С ТАБЛИЦЕЙ И ПАГИНАЦИЕЙ)
+// =====================================================
 async function renderDocs() {
   const isAdmin = CURRENT_USER.role === "admin";
   let allDocs = [];
+  
+  const state = { 
+    filter: "all", 
+    search: "", 
+    sort: "new", 
+    page: 1, 
+    limit: 20 
+  };
 
   app.innerHTML = `
     <section class="page">
       <h1>${isAdmin ? "📚 Все документы" : "📚 Мои документы"}</h1>
-      <p class="muted">${isAdmin
-        ? "Публичные доступны всем. Личные — только владельцу и вам. Форматы: PDF, DOCX, XLSX, CSV, TXT, MD."
-        : "Здесь только ваши документы. Форматы: PDF, DOCX, XLSX, CSV, TXT, MD."}</p>
-
+      
       <div id="dropzone-host" style="margin:1rem 0"></div>
 
       <div class="docs-toolbar">
         <div class="search-box">
-          <input type="search" id="docs-search"
-                 placeholder="Поиск по названию или содержимому..."
-                 autocomplete="off">
+          <input type="search" id="docs-search" placeholder="Поиск по названию или содержимому..." autocomplete="off">
         </div>
         ${isAdmin ? `
           <div class="filter-chips" id="docs-filters">
@@ -811,31 +943,44 @@ async function renderDocs() {
             <option value="old">Сначала старые</option>
             <option value="title">По названию</option>
           </select>
-          ${isAdmin ? `
-            <label class="switch">
-              <input type="checkbox" id="docs-group" checked>
-              <span>Группировать</span>
-            </label>` : ""}
         </div>
       </div>
 
-      <div class="docs-list" id="docs-list">
-        <div class="skeleton" style="height:70px"></div>
-        <div class="skeleton" style="height:70px; margin-top:.5rem"></div>
+      <div class="table-container">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th class="td-id">ID</th>
+              <th>Документ</th>
+              ${isAdmin ? '<th class="td-owner">Владелец</th>' : ""}
+              <th class="td-actions">Действия</th>
+            </tr>
+          </thead>
+          <tbody id="docs-tbody">
+            <tr><td colspan="4" style="text-align:center; padding: 2rem;">Загрузка...</td></tr>
+          </tbody>
+        </table>
+      </div>
+      
+      <div class="pagination">
+        <span id="page-info">Стр. 1</span>
+        <div class="pagination-controls">
+          <button class="page-btn" id="prev-page" disabled>← Назад</button>
+          <button class="page-btn" id="next-page" disabled>Вперед →</button>
+        </div>
       </div>
     </section>`;
 
-  const state = { filter: "all", search: "", sort: "new", group: true };
-
   document.getElementById("docs-search").addEventListener("input", (e) => {
     state.search = e.target.value.trim().toLowerCase();
-    renderList();
+    state.page = 1;
+    renderTable();
   });
+  
   document.getElementById("docs-sort").addEventListener("change", (e) => {
-    state.sort = e.target.value; renderList();
+    state.sort = e.target.value; 
+    renderTable();
   });
-  const groupChk = document.getElementById("docs-group");
-  if (groupChk) groupChk.addEventListener("change", (e) => { state.group = e.target.checked; renderList(); });
 
   const filtersEl = document.getElementById("docs-filters");
   if (filtersEl) {
@@ -843,10 +988,18 @@ async function renderDocs() {
       const btn = e.target.closest(".chip");
       if (!btn) return;
       state.filter = btn.dataset.filter;
+      state.page = 1;
       filtersEl.querySelectorAll(".chip").forEach((c) => c.classList.toggle("active", c === btn));
-      renderList();
+      renderTable();
     });
   }
+
+  document.getElementById("prev-page").onclick = () => {
+    if (state.page > 1) { state.page--; renderTable(); }
+  };
+  document.getElementById("next-page").onclick = () => {
+    state.page++; renderTable();
+  };
 
   mountDropzone(document.getElementById("dropzone-host"), {
     formats: [".txt", ".pdf", ".docx", ".xlsx", ".csv", ".md"],
@@ -859,10 +1012,10 @@ async function renderDocs() {
     try {
       allDocs = await API.get("/docs/list");
       updateChipCounts();
-      renderList();
+      renderTable();
     } catch (e) {
-      document.getElementById("docs-list").innerHTML =
-        `<p class="error">Не удалось загрузить: ${escapeHtml(e.message)}</p>`;
+      document.getElementById("docs-tbody").innerHTML = 
+        `<tr><td colspan="4" style="color:#ef4444; text-align:center;">Ошибка: ${escapeHtml(e.message)}</td></tr>`;
     }
   }
 
@@ -882,99 +1035,131 @@ async function renderDocs() {
     });
   }
 
-  function applyFilters(docs) {
-    let out = docs;
-    if (state.filter === "public") out = out.filter((d) => d.public);
-    else if (state.filter === "mine") out = out.filter((d) => d.mine);
-    else if (state.filter === "others") out = out.filter((d) => !d.mine && !d.public);
+  function renderTable() {
+    const tbody = document.getElementById("docs-tbody");
+    
+    let filtered = allDocs;
+    if (state.filter === "public") filtered = filtered.filter((d) => d.public);
+    else if (state.filter === "mine") filtered = filtered.filter((d) => d.mine);
+    else if (state.filter === "others") filtered = filtered.filter((d) => !d.mine && !d.public);
+    
     if (state.search) {
       const q = state.search;
-      out = out.filter((d) =>
-        (d.title || "").toLowerCase().includes(q) ||
-        (d.preview || "").toLowerCase().includes(q)
+      filtered = filtered.filter((d) =>
+        (d.title || "").toLowerCase().includes(q) || (d.preview || "").toLowerCase().includes(q)
       );
     }
+
     const sorters = {
       new: (a, b) => b.id - a.id,
       old: (a, b) => a.id - b.id,
       title: (a, b) => (a.title || "").localeCompare(b.title || "", "ru"),
     };
-    return [...out].sort(sorters[state.sort] || sorters.new);
-  }
+    filtered.sort(sorters[state.sort] || sorters.new);
 
-  function renderList() {
-    const list = document.getElementById("docs-list");
-    const docs = applyFilters(allDocs);
-    if (!allDocs.length) {
-      list.innerHTML = `<p class="empty-hint">Пока пусто. Загрузите документ — я буду опираться на него в ответах.</p>`;
+    const totalPages = Math.ceil(filtered.length / state.limit) || 1;
+    if (state.page > totalPages) state.page = totalPages;
+    
+    const start = (state.page - 1) * state.limit;
+    const pageDocs = filtered.slice(start, start + state.limit);
+
+    document.getElementById("page-info").textContent = `Стр. ${state.page} из ${totalPages} (всего ${filtered.length})`;
+    document.getElementById("prev-page").disabled = state.page <= 1;
+    document.getElementById("next-page").disabled = state.page >= totalPages;
+
+    if (!pageDocs.length) {
+      tbody.innerHTML = `<tr><td colspan="4" style="text-align:center; padding: 2rem;">Ничего не найдено.</td></tr>`;
       return;
     }
-    if (!docs.length) {
-      list.innerHTML = `<p class="empty-hint">Ничего не найдено по фильтру.</p>`;
-      return;
-    }
-    list.innerHTML = "";
 
-    if (isAdmin && state.group) {
-      const groups = new Map();
-      docs.forEach((d) => {
-        let key, label;
-        if (d.public)      { key = "public"; label = "🌐 Публичные"; }
-        else if (d.mine)   { key = "mine";   label = "🙋 Мои"; }
-        else               { key = `u_${d.owner_id}`; label = `👤 ${d.owner_name || ("Пользователь " + d.owner_id)}`; }
-        if (!groups.has(key)) groups.set(key, { label, items: [] });
-        groups.get(key).items.push(d);
-      });
-      groups.forEach(({ label, items }) => {
-        const section = document.createElement("div");
-        section.className = "docs-group";
-        section.innerHTML = `
-          <div class="docs-group-head">
-            <span class="docs-group-title">${escapeHtml(label)}</span>
-            <span class="docs-group-count">${items.length}</span>
-            <span class="docs-group-chevron">▾</span>
-          </div>
-          <div class="docs-group-body"></div>`;
-        const body = section.querySelector(".docs-group-body");
-        items.forEach((d) => body.appendChild(renderDocItem(d)));
-        section.querySelector(".docs-group-head").onclick = () => section.classList.toggle("collapsed");
-        list.appendChild(section);
-      });
-    } else {
-      docs.forEach((d) => list.appendChild(renderDocItem(d)));
-    }
+    tbody.innerHTML = "";
+    pageDocs.forEach(d => {
+      const canDelete = d.mine || isAdmin;
+      const badge = d.public ? "🌐" : (d.mine ? "👤" : "🔒");
+      const ownerText = d.public ? "Все" : (d.mine ? "Я" : (d.owner_name || d.owner_id));
+      
+      const tr = el(`
+        <tr>
+          <td class="td-id">${d.id}</td>
+          <td class="td-main">
+            <div class="doc-title" title="${escapeHtml(d.title)}">${escapeHtml(d.title)}</div>
+            <div class="doc-preview-text">${escapeHtml(d.preview)}…</div>
+          </td>
+          ${isAdmin ? `<td class="td-owner">${badge} ${escapeHtml(ownerText)}</td>` : ""}
+          <td class="td-actions">
+            <button class="table-btn" title="Скачать" data-dl>
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+            </button>
+            <button class="table-btn" title="Открыть" data-open>
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+            </button>
+            ${canDelete ? `
+            <button class="table-btn danger" title="Удалить" data-del>
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
+            </button>` : ""}
+          </td>
+        </tr>
+      `);
+
+      tr.querySelector("[data-dl]").onclick = () => downloadDoc(d.id, d.title);
+      tr.querySelector("[data-open]").onclick = () => openDoc(d.id, canDelete);
+      
+      if (canDelete) {
+        tr.querySelector("[data-del]").onclick = async () => {
+          const ok = await confirmDialog("Удалить документ?", `«${d.title}» будет удалён безвозвратно.`, { danger: true, confirmText: "Удалить" });
+          if (!ok) return;
+          try {
+            await API.del(`/docs/${d.id}`);
+            toast("Документ удалён", "success");
+            refreshDocs();
+          } catch (err) { toast("Ошибка: " + err.message, "error"); }
+        };
+      }
+
+      tbody.appendChild(tr);
+    });
   }
 
-  function renderDocItem(d) {
-    const badges = [];
-    if (d.public) badges.push(`<span class="badge">🌐 публичный</span>`);
-    if (d.mine) badges.push(`<span class="badge badge-mine">мой</span>`);
-    if (isAdmin && !d.mine && !d.public && d.owner_name) {
-      badges.push(`<span class="badge badge-other">👤 ${escapeHtml(d.owner_name)}</span>`);
-    }
-    const canDelete = d.mine || isAdmin;
+  await refreshDocs();
+}
 
-    const item = el(`
-      <div class="doc-item" data-id="${d.id}">
-        <div class="doc-head">
-          <b>${escapeHtml(d.title)}</b>
-          <div class="badges">${badges.join("")}</div>
-        </div>
-        <p>${escapeHtml(d.preview)}…</p>
-        ${canDelete ? `
-          <button class="del-btn" title="Удалить документ" data-del aria-label="Удалить">
-            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6M10 11v6M14 11v6"/>
+async function openDoc(id, canDelete = false) {
+  app.innerHTML = `<section class="page"><div class="skeleton" style="height:200px"></div></section>`;
+  try {
+    const d = await API.get(`/docs/${id}`);
+    app.innerHTML = `
+      <section class="page">
+        <div class="doc-actions">
+          <button class="back" id="doc-back" type="button">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M19 12H5M12 19l-7-7 7-7"/>
             </svg>
-          </button>` : ""}
-      </div>`);
-    item.querySelector(".doc-head").onclick = () => openDoc(d.id);
-    item.querySelector("p").onclick = () => openDoc(d.id);
+            <span>Назад</span>
+          </button>
+          <button class="doc-download" id="doc-download" type="button">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/>
+            </svg>
+            <span>Скачать</span>
+          </button>
+          ${canDelete ? `
+            <button class="doc-delete" id="doc-delete" type="button" title="Удалить документ" aria-label="Удалить документ">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6M10 11v6M14 11v6"/>
+              </svg>
+              <span>Удалить</span>
+            </button>` : ""}
+        </div>
+        <h1>${escapeHtml(d.title)}</h1>
+        <pre class="doc-content">${escapeHtml(d.content)}</pre>
+      </section>`;
 
-    const delBtn = item.querySelector("[data-del]");
+    document.getElementById("doc-back").onclick = () => router();
+    document.getElementById("doc-download").onclick = () => downloadDoc(id, d.title);
+
+    const delBtn = document.getElementById("doc-delete");
     if (delBtn) {
-      delBtn.onclick = async (e) => {
-        e.stopPropagation();
+      delBtn.onclick = async () => {
         const ok = await confirmDialog(
           "Удалить документ?",
           `«${d.title}» будет удалён безвозвратно.`,
@@ -982,85 +1167,50 @@ async function renderDocs() {
         );
         if (!ok) return;
         try {
-          await API.del(`/docs/${d.id}`);
-          item.classList.add("removing");
-          setTimeout(() => refreshDocs(), 220);
+          await API.del(`/docs/${id}`);
           toast("Документ удалён", "success");
-        } catch (err) { toast("Ошибка: " + err.message, "error"); }
+          router();
+        } catch (err) {
+          toast("Ошибка: " + err.message, "error");
+        }
       };
     }
-    return item;
-  }
-
-  await refreshDocs();
-}
-
-async function openDoc(id) {
-  app.innerHTML = `<section class="page"><div class="skeleton" style="height:200px"></div></section>`;
-  try {
-    const d = await API.get(`/docs/${id}`);
-    app.innerHTML = `
-      <section class="page">
-        <button class="back" id="doc-back" type="button">
-          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M19 12H5M12 19l-7-7 7-7"/>
-          </svg>
-          <span>Назад к списку</span>
-        </button>
-        <h1>${escapeHtml(d.title)}</h1>
-        <pre class="doc-content">${escapeHtml(d.content)}</pre>
-      </section>`;
-    document.getElementById("doc-back").onclick = () => renderDocs();
   } catch (e) {
     app.innerHTML = `<section class="page">
       <button class="back" id="doc-back" type="button">
         <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <path d="M19 12H5M12 19l-7-7 7-7"/>
         </svg>
-        <span>Назад к списку</span>
+        <span>Назад</span>
       </button>
       <p class="error">${escapeHtml(e.message)}</p>
     </section>`;
-    document.getElementById("doc-back").onclick = () => renderDocs();
+    document.getElementById("doc-back").onclick = () => router();
   }
 }
 
+// =====================================================
+// ADMIN PAGE (ВКЛАДКИ)
+// =====================================================
 async function renderAdmin() {
   if (CURRENT_USER?.role !== "admin") { location.hash = "/chat"; return; }
 
   app.innerHTML = `
     <section class="page">
       <h1>⚙️ Админ-панель</h1>
-      <div class="stats" id="stats">
-        <div class="skeleton" style="width:120px; height:1.2rem"></div>
-        <div class="skeleton" style="width:120px; height:1.2rem"></div>
+      
+      <div class="stats" id="stats" style="margin-bottom: 1.5rem;">
         <div class="skeleton" style="width:120px; height:1.2rem"></div>
       </div>
 
-      <h2>Загрузить документ как публичный</h2>
-      <p class="muted">Файл будет виден всем пользователям и попадёт в общую базу знаний.</p>
-      <div id="admin-dropzone"></div>
+      <div class="tabs">
+        <button class="tab-btn active" data-tab="docs">📄 Документы</button>
+        <button class="tab-btn" data-tab="users">👥 Пользователи</button>
+        <button class="tab-btn" data-tab="settings">⚙️ Настройки</button>
+      </div>
 
-      <h2>Пользователи</h2>
-      <div class="users-toolbar">
-        <div class="search-box">
-          <input type="search" id="users-search" placeholder="Поиск по имени или коду..." autocomplete="off">
-        </div>
-        <div class="filter-chips" id="users-filters">
-          <button type="button" class="chip active" data-role="all">Все <span class="chip-count"></span></button>
-          <button type="button" class="chip" data-role="student">🎒 Ученики <span class="chip-count"></span></button>
-          <button type="button" class="chip" data-role="teacher">📘 Учителя <span class="chip-count"></span></button>
-          <button type="button" class="chip" data-role="parent">👪 Родители <span class="chip-count"></span></button>
-          <button type="button" class="chip" data-role="admin">🛠 Админы <span class="chip-count"></span></button>
-        </div>
-      </div>
-      <div class="users-list" id="users-list">
-        <div class="skeleton" style="height:40px"></div>
-      </div>
+      <div id="tab-content"></div>
     </section>`;
-
-  let allUsers = [];
-  const state = { role: "all", search: "" };
 
   async function refreshStats() {
     try {
@@ -1072,97 +1222,143 @@ async function renderAdmin() {
     } catch {}
   }
 
-  async function loadUsers() {
-    try {
-      allUsers = await API.get("/admin/users");
-      updateUserCounts();
-      renderUsers();
-    } catch (e) {
-      document.getElementById("users-list").innerHTML =
-        `<p class="error">${escapeHtml(e.message)}</p>`;
-    }
-  }
-
-  function updateUserCounts() {
-    const counts = {
-      all: allUsers.length,
-      student: allUsers.filter((u) => u.role === "student").length,
-      teacher: allUsers.filter((u) => u.role === "teacher").length,
-      parent: allUsers.filter((u) => u.role === "parent").length,
-      admin: allUsers.filter((u) => u.role === "admin").length,
+  document.querySelectorAll(".tab-btn").forEach(btn => {
+    btn.onclick = () => {
+      document.querySelectorAll(".tab-btn").forEach(b => b.classList.remove("active"));
+      btn.classList.add("active");
+      renderTab(btn.dataset.tab);
     };
-    document.querySelectorAll("#users-filters .chip").forEach((c) => {
-      const n = counts[c.dataset.role] ?? 0;
-      const el = c.querySelector(".chip-count");
-      if (el) el.textContent = n ? `(${n})` : "";
-    });
-  }
+  });
 
-  function applyUserFilters(users) {
-    let out = users;
-    if (state.role !== "all") out = out.filter((u) => u.role === state.role);
-    if (state.search) {
-      const q = state.search;
-      out = out.filter((u) =>
-        (u.name || "").toLowerCase().includes(q) ||
-        (u.code_formatted || "").toLowerCase().includes(q) ||
-        (u.access_code || "").toLowerCase().includes(q)
-      );
-    }
-    return out;
-  }
+  async function renderTab(tab) {
+    const content = document.getElementById("tab-content");
+    content.innerHTML = `<div class="skeleton" style="height:200px; border-radius:12px;"></div>`;
 
-  function renderUsers() {
-    const list = document.getElementById("users-list");
-    const users = applyUserFilters(allUsers);
-    if (!allUsers.length) { list.innerHTML = `<p class="empty-hint">Пока нет пользователей.</p>`; return; }
-    if (!users.length) { list.innerHTML = `<p class="empty-hint">Ничего не найдено.</p>`; return; }
-    list.innerHTML = "";
-    users.forEach((u) => {
-      const row = el(`
-        <div class="user-row">
-          <div class="user-info">
-            <b>${escapeHtml(u.name)}</b>
-            <div class="muted"><code>${escapeHtml(u.code_formatted)}</code></div>
-          </div>
-          <select data-uid="${u.id}">
-            ${["student", "teacher", "parent", "admin"].map((r) =>
-              `<option value="${r}" ${r === u.role ? "selected" : ""}>${ROLE_LABELS[r] || r}</option>`
-            ).join("")}
-          </select>
-        </div>`);
-      row.querySelector("select").onchange = async (e) => {
+    if (tab === "docs") {
+      content.innerHTML = `
+        <div id="admin-dropzone" style="margin-bottom: 1rem;"></div>
+        <p class="muted">Загруженные здесь файлы станут публичными и будут доступны всем пользователям.</p>
+      `;
+      mountDropzone(document.getElementById("admin-dropzone"), {
+        formats: [".txt", ".pdf", ".docx", ".xlsx", ".csv", ".md"],
+        title: "Перетащите публичный документ",
+        onFile: (file) => API.upload("/docs/upload", file, { public: true }),
+        onBatchDone: refreshStats,
+      });
+    } 
+    
+    else if (tab === "users") {
+      content.innerHTML = `
+        <div class="search-box" style="margin-bottom: 1rem;">
+          <input type="search" id="users-search" placeholder="Поиск по имени или коду...">
+        </div>
+        <div class="table-container">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th style="width: 50px;">ID</th>
+                <th>Имя</th>
+                <th>Код</th>
+                <th style="width: 130px;">Роль</th>
+                <th style="width: 100px; text-align:right;">Действия</th>
+              </tr>
+            </thead>
+            <tbody id="users-tbody"></tbody>
+          </table>
+        </div>
+      `;
+
+      let allUsers = await API.get("/admin/users");
+      
+      function renderUsersTable(filter = "") {
+        const tbody = document.getElementById("users-tbody");
+        let filtered = allUsers.filter(u => 
+          u.name.toLowerCase().includes(filter) || u.code_formatted.toLowerCase().includes(filter)
+        );
+
+        if (!filtered.length) {
+          tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;">Не найдено</td></tr>`;
+          return;
+        }
+
+        tbody.innerHTML = "";
+        filtered.forEach(u => {
+          const tr = el(`
+            <tr style="${u.is_banned ? 'opacity: 0.5; background: rgba(239,68,68,0.05);' : ''}">
+              <td>${u.id}</td>
+              <td><b>${escapeHtml(u.name)}</b> ${u.is_banned ? '🚫' : ''}</td>
+              <td><code>${escapeHtml(u.code_formatted)}</code></td>
+              <td>
+                <select data-uid="${u.id}" style="width:100%; padding:0.3rem;">
+                  ${["student", "teacher", "parent", "admin"].map(r =>
+                    `<option value="${r}" ${r === u.role ? "selected" : ""}>${ROLE_LABELS[r]}</option>`
+                  ).join("")}
+                </select>
+              </td>
+              <td class="td-actions">
+                <button class="table-btn ${u.is_banned ? '' : 'danger'}" title="${u.is_banned ? 'Разбанить' : 'Забанить'}" data-ban>
+                  ${u.is_banned ? '🔓' : '🔒'}
+                </button>
+              </td>
+            </tr>
+          `);
+
+          tr.querySelector("select").onchange = async (e) => {
+            try {
+              await API.post(`/admin/users/${u.id}/role`, { role: e.target.value });
+              toast("Роль обновлена", "success");
+            } catch(err) { toast("Ошибка: " + err.message, "error"); e.target.value = u.role; }
+          };
+
+          tr.querySelector("[data-ban]").onclick = async () => {
+            try {
+              await API.post(`/admin/users/${u.id}/ban`, { is_banned: !u.is_banned });
+              toast(`Пользователь ${u.is_banned ? 'разбанен' : 'забанен'}`, "success");
+              renderTab("users");
+            } catch(err) { toast("Ошибка: " + err.message, "error"); }
+          };
+
+          tbody.appendChild(tr);
+        });
+      }
+
+      renderUsersTable();
+      document.getElementById("users-search").oninput = (e) => renderUsersTable(e.target.value.toLowerCase());
+    } 
+    
+    else if (tab === "settings") {
+      const cfg = await API.get("/admin/config");
+      
+      content.innerHTML = `
+        <form id="settings-form" class="form" style="max-width: 800px;">
+          <label>Системный промпт агента (поведение ИИ)</label>
+          <textarea name="system_prompt" rows="8" style="font-family: monospace; font-size: 0.9rem;" placeholder="Оставьте пустым для использования стандартного промпта...">${escapeHtml(cfg.system_prompt)}</textarea>
+          <p class="muted" style="font-size:0.8rem; margin-top:0.2rem;">Здесь можно задать характер ИИ. Например: "Отвечай как строгий учитель" или "Будь максимально кратким".</p>
+
+          <label style="margin-top:1.5rem;">Максимальный размер контекста (символов)</label>
+          <input type="number" name="max_context_chars" value="${cfg.max_context_chars}">
+          <p class="muted" style="font-size:0.8rem;">Сколько текста из базы знаний ИИ может прочитать за один раз.</p>
+
+          <button type="submit" style="margin-top:1.5rem;">Сохранить настройки</button>
+        </form>
+      `;
+
+      document.getElementById("settings-form").onsubmit = async (e) => {
+        e.preventDefault();
+        const fd = Object.fromEntries(new FormData(e.target));
         try {
-          await API.post(`/admin/users/${u.id}/role`, { role: e.target.value });
-          u.role = e.target.value;
-          updateUserCounts();
-          toast(`Роль обновлена: ${u.name} → ${e.target.value}`, "success");
+          await API.post("/admin/config", {
+            system_prompt: fd.system_prompt,
+            max_context_chars: parseInt(fd.max_context_chars) || 120000
+          });
+          toast("Настройки сохранены", "success");
         } catch (err) { toast("Ошибка: " + err.message, "error"); }
       };
-      list.appendChild(row);
-    });
+    }
   }
 
-  document.getElementById("users-search").addEventListener("input", (e) => {
-    state.search = e.target.value.trim().toLowerCase();
-    renderUsers();
-  });
-  document.getElementById("users-filters").addEventListener("click", (e) => {
-    const btn = e.target.closest(".chip");
-    if (!btn) return;
-    state.role = btn.dataset.role;
-    document.querySelectorAll("#users-filters .chip").forEach((c) => c.classList.toggle("active", c === btn));
-    renderUsers();
-  });
-
-  await Promise.all([refreshStats(), loadUsers()]);
-
-  mountDropzone(document.getElementById("admin-dropzone"), {
-    formats: [".txt", ".pdf", ".docx", ".xlsx", ".csv", ".md"],
-    title: "Перетащите документ для публичной базы",
-    onFile: (file) => API.upload("/docs/upload", file, { public: true }),
-    onBatchDone: refreshStats,
-  });
+  await refreshStats();
+  renderTab("docs");
 }
 
 async function renderProfile() {
@@ -1187,11 +1383,10 @@ async function renderProfile() {
 
       <hr>
       <h2>Приложение</h2>
-      <p class="muted">Установите Лицей GPT на главный экран — он будет работать как обычное приложение, включая оффлайн-просмотр ранее загруженных данных.</p>
+      <p class="muted">Установите Лицей GPT на главный экран — он будет работать как обычное приложение.</p>
       <button id="install-btn" class="secondary">📲 Установить на устройство</button>
 
       <h2>Уведомления</h2>
-      <p class="muted">Модуль готов. Уведомления можно получать от администратора (рассылки, события). Пока — тестовое, для проверки.</p>
       <div class="notif-row">
         <span id="notif-status" class="muted">Статус: —</span>
         <button id="notif-enable" class="secondary">🔔 Включить / проверить</button>
@@ -1201,7 +1396,6 @@ async function renderProfile() {
       <button id="logout-btn" class="secondary">🚪 Выйти</button>
       <hr>
       <h2>Войти другим кодом</h2>
-      <p class="muted">Сменить аккаунт на этом устройстве.</p>
       <form id="switch-form" class="form">
         <input name="code" placeholder="XXXX-XXXX-XXXX" autocomplete="off"
                style="text-align:center; letter-spacing:2px; font-family:ui-monospace, monospace; text-transform:uppercase">
@@ -1273,17 +1467,20 @@ async function renderProfile() {
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", async () => {
     try {
-      const reg = await navigator.serviceWorker.register("/sw.js");
-      reg.addEventListener("updatefound", () => {
-        const sw = reg.installing;
-        sw?.addEventListener("statechange", () => {
-          if (sw.state === "installed" && navigator.serviceWorker.controller) {
-            sw.postMessage({ type: "SKIP_WAITING" });
-            toast("Обновление готово. Перезагрузите страницу.", "info", 6000);
-          }
-        });
+      const reg = await navigator.serviceWorker.register("/sw.js", { updateViaCache: "none" });
+      const checkUpdate = () => reg.update().catch(() => {});
+      setInterval(checkUpdate, 15 * 60 * 1000);
+      document.addEventListener("visibilitychange", () => {
+        if (document.visibilityState === "visible") checkUpdate();
       });
     } catch {}
+  });
+
+  let refreshing = false;
+  navigator.serviceWorker.addEventListener("controllerchange", () => {
+    if (refreshing) return;
+    refreshing = true;
+    location.reload();
   });
 }
 

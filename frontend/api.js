@@ -43,7 +43,7 @@ const API = {
     return res.json();
   },
 
-  async *streamChat(message) {
+  async *streamChat(message, { onSources, onStatus } = {}) {
     const res = await fetch("/api/chat/stream", {
       method: "POST",
       credentials: "include",
@@ -51,21 +51,45 @@ const API = {
       body: JSON.stringify({ message }),
     });
     if (!res.ok) throw new Error("Stream failed");
+
     const reader = res.body.getReader();
     const dec = new TextDecoder();
     let buf = "";
+
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
       buf += dec.decode(value, { stream: true });
       const parts = buf.split("\n\n");
       buf = parts.pop();
+
       for (const block of parts) {
-        const line = block.split("\n").find((l) => l.startsWith("data: "));
-        if (!line) continue;
-        const data = line.slice(6);
-        if (data === "[DONE]") return;
-        yield data.replace(/\\n/g, "\n");
+        if (!block.trim()) continue;
+
+        let dataLine = "";
+        for (const line of block.split("\n")) {
+          if (line.startsWith("data: ")) {
+            dataLine = line.slice(6).trim();
+            break;
+          }
+        }
+
+        if (!dataLine) continue;
+        if (dataLine === "[DONE]") return;
+
+        try {
+          const data = JSON.parse(dataLine);
+          
+          if (data.type === "sources") {
+            if (typeof onSources === "function") onSources(data.docs);
+          } else if (data.type === "status") {
+            if (typeof onStatus === "function") onStatus(data.text);
+          } else if (data.type === "chunk") {
+            yield data.text;
+          }
+        } catch (e) {
+          console.error("SSE Parse error:", e, dataLine);
+        }
       }
     }
   },

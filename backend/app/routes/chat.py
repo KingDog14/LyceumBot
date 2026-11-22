@@ -1,6 +1,7 @@
 ﻿# Copyright (c) 2026 Король Дмитрий. All rights reserved.
 # Проект «Лицей GPT». Автор — Король Дмитрий.
 
+import json
 import logging
 from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
@@ -31,12 +32,12 @@ async def stream(payload: ChatIn, user=Depends(get_current_user)):
     )
 
     async def gen():
-        async for chunk in assistant.ask_stream(
+        async for event in assistant.ask_stream(
             payload.message, user["id"], user["role"], docs=docs
         ):
-            safe = chunk.replace("\r", "").replace("\n", "\\n")
-            yield f"data: {safe}\n\n"
-        yield "event: done\ndata: [DONE]\n\n"
+            # Сериализуем всё в JSON и шлём через стандартный data:
+            yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+        yield "data: [DONE]\n\n"
 
     return StreamingResponse(
         gen(),

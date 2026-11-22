@@ -4,7 +4,11 @@
 import csv
 import io
 import logging
+import mimetypes
+import os
 import re
+import shutil
+import uuid
 from pathlib import Path
 from typing import List
 
@@ -12,7 +16,10 @@ from docx import Document as DocxDocument
 from openpyxl import load_workbook
 from pypdf import PdfReader
 
+from .config import settings
+
 logger = logging.getLogger("rag")
+
 
 TEXT_EXTS = {".txt", ".md", ".log"}
 PDF_EXTS = {".pdf"}
@@ -137,11 +144,49 @@ def extract_text_from_file(path: str, mime: str = "") -> str:
         return ""
 
 
-def ingest_text(db, assistant, title: str, content: str = None, file_path: str = None, owner_id=None) -> List[int]:
+def ingest_text(
+    db, assistant, title: str,
+    content: str = None,
+    file_path: str = None,
+    owner_id=None,
+) -> List[int]:
+    uploads_dir = settings.UPLOADS_DIR
+    os.makedirs(uploads_dir, exist_ok=True)
+
     if file_path:
-        content = extract_text_from_file(file_path)
+        ext = Path(file_path).suffix.lower() or Path(title).suffix.lower() or ".bin"
+        stored_name = f"{uuid.uuid4().hex}{ext}"
+        stored_path = os.path.join(uploads_dir, stored_name)
+
+        try:
+            shutil.copy2(file_path, stored_path)
+        except Exception:
+            logger.exception("Не удалось сохранить оригинал в %s", stored_path)
+            raise ValueError("Не удалось сохранить файл")
+
+        try:
+            content = extract_text_from_file(stored_path)
+        except Exception:
+            content = ""
+
+        if not content or not content.strip():
+            try:
+                os.remove(stored_path)
+            except OSError:
+                pass
+            raise ValueError("В файле не найден текст для индексации")
+
+        mime_type, _ = mimetypes.guess_type(stored_path)
+        meta = extract_meta(content)
+
+        doc_id = db.add_doc(
+            title, content, embedding=None, meta=meta,
+            owner_id=owner_id, file_path=stored_path, mime_type=mime_type,
+        )
+        return [doc_id]
+
     if not content or not content.strip():
-        raise ValueError("В файле не найден текст для индексации")
+        raise ValueError("Пустой документ")
 
     meta = extract_meta(content)
     doc_id = db.add_doc(title, content, embedding=None, meta=meta, owner_id=owner_id)
